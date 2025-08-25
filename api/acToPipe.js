@@ -1,4 +1,4 @@
-// api/acToPipe.js (versão final com análise e classificação da URL)
+// api/acToPipe.js (versão com parser de URL robusto)
 
 async function apiCall(url, options) {
     const response = await fetch(url, options);
@@ -58,38 +58,39 @@ export default async function handler(req, res) {
         
         const firstUrl = sortedLogs[0].value;
 
-        // --- INÍCIO DA NOVA LÓGICA DE ANÁLISE DE URL ---
+        // --- INÍCIO DA NOVA LÓGICA DE ANÁLISE DE URL (MAIS ROBUSTA) ---
 
         let conversao = 'Outro'; // Valor padrão
         let grupo = '';       // Valor padrão
 
-        try {
-            const urlObject = new URL(firstUrl);
-            const params = urlObject.searchParams;
+        // 1. Verifica se é Google Ads (procurando por gclid ou gad_source)
+        if (firstUrl.includes('gclid=') || firstUrl.includes('gad_source=1')) {
+            conversao = 'Google Ads';
+            
+            // 2. Extrai o parâmetro 'group' manualmente com uma expressão regular
+            const groupMatch = firstUrl.match(/[?&]group=([^&]+)/);
+            grupo = groupMatch ? groupMatch[1] : 'Não encontrado';
 
-            // 1. Verifica se é Google Ads
-            if (params.has('gclid') || params.get('gad_source') === '1') {
-                conversao = 'Google Ads';
-                grupo = params.get('group') || 'Não encontrado'; // Pega o valor de 'group'
-            }
-            // 2. Se não for Ads, verifica se é Orgânico (contém /blog/)
-            else if (urlObject.pathname.includes('/blog/')) {
-                conversao = 'Orgânico';
-            }
-            // 3. Se não for nenhum dos acima, permanece 'Outro'
-
-        } catch (e) {
-            // Se a URL for inválida por algum motivo, não quebra a aplicação
-            console.error("Erro ao analisar a URL:", e.message);
+        } 
+        // 3. Se não for Ads, verifica se é Orgânico
+        else if (firstUrl.includes('/blog/')) {
+            conversao = 'Orgânico';
         }
+        // 4. Se não for nenhum dos acima, permanece 'Outro'
+
+        // --- FIM DA NOVA LÓGICA ---
 
         const updatePayload = { [PIPEDRIVE_URL_FIELD_ID]: firstUrl };
         await apiCall(`${pipedriveBaseUrl}/deals/${dealId}?api_token=${PIPEDRIVE_API_TOKEN}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updatePayload) });
         
-        // Formata a nova mensagem de sucesso
-        const successMessage = `URL: ${firstUrl}\nConversão: ${conversao}\nGrupo: ${grupo}`;
+        // Retorna um objeto com os dados estruturados
+        const resultData = {
+            url: firstUrl,
+            conversao: conversao,
+            grupo: grupo
+        };
 
-        return res.status(200).json({ success: true, message: successMessage });
+        return res.status(200).json({ success: true, data: resultData });
 
     } catch (error) {
         console.error("ERRO na execução:", error);
