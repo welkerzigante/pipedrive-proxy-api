@@ -1,4 +1,4 @@
-// api/acToPipe.js (versão definitiva com o endpoint global + filtro + ordenação)
+// api/acToPipe.js (versão de teste final, sem o parâmetro 'limit')
 
 async function apiCall(url, options) {
     const response = await fetch(url, options);
@@ -42,25 +42,25 @@ export default async function handler(req, res) {
         if (!acContactData.contacts || acContactData.contacts.length === 0) throw new Error(`Contato com email ${email} não encontrado no ActiveCampaign.`);
         const acContactId = acContactData.contacts[0].id;
 
-        // --- CORREÇÃO DEFINITIVA DA CHAMADA À API ---
-        // Usamos o endpoint GERAL com o filtro e a ordenação corretos para ele
-        const trackingLogsUrl = `${AC_API_URL}/api/3/trackingLogs?contact=${acContactId}&orders[tstamp]=ASC&limit=100`;
+        // --- MUDANÇA PARA O TESTE FINAL: REMOVEMOS o parâmetro 'limit' ---
+        const trackingLogsUrl = `${AC_API_URL}/api/3/contacts/${acContactId}/trackingLogs`;
         
         const trackingLogsData = await apiCall(trackingLogsUrl, { headers: { 'Api-Token': AC_API_KEY } });
-
-        console.log("DADOS BRUTOS RECEBIDOS DA API (AGORA DEVEM SER DO CONTATO CERTO E ORDENADOS):", JSON.stringify(trackingLogsData, null, 2));
+        
+        console.log("DADOS BRUTOS RECEBIDOS DA API (SEM LIMIT):", JSON.stringify(trackingLogsData, null, 2));
 
         if (!trackingLogsData.trackingLogs || trackingLogsData.trackingLogs.length === 0) {
-            throw new Error(`Nenhum histórico de navegação (Tracking Log) encontrado para este contato no ActiveCampaign.`);
+            throw new Error(`Nenhum histórico de navegação (Tracking Log) encontrado para este contato.`);
         }
         
-        const firstValidLog = trackingLogsData.trackingLogs.find(log => log.value);
-
-        if (!firstValidLog) {
+        const pageVisitLogs = trackingLogsData.trackingLogs.filter(log => log.value);
+        const sortedLogs = pageVisitLogs.sort((a, b) => new Date(a.tstamp) - new Date(b.tstamp));
+        
+        if (sortedLogs.length === 0) {
             throw new Error(`Nenhum log de visita a uma página web foi encontrado no histórico.`);
         }
         
-        const firstUrl = firstValidLog.value;
+        const firstUrl = sortedLogs[0].value;
 
         const updatePayload = { [PIPEDRIVE_URL_FIELD_ID]: firstUrl };
         await apiCall(`${pipedriveBaseUrl}/deals/${dealId}?api_token=${PIPEDRIVE_API_TOKEN}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updatePayload) });
