@@ -1,4 +1,4 @@
-// api/acToPipe.js (versão de depuração para inspecionar os logs)
+// api/acToPipe.js (versão final que usa o campo 'value' dos logs)
 
 async function apiCall(url, options) {
     const response = await fetch(url, options);
@@ -45,21 +45,19 @@ export default async function handler(req, res) {
         const trackingLogsUrl = `${AC_API_URL}/api/3/trackingLogs?filters[contactid]=${acContactId}&sort=tstamp&sort_direction=ASC&limit=100`;
         const trackingLogsData = await apiCall(trackingLogsUrl, { headers: { 'Api-Token': AC_API_KEY } });
 
-        // --- LINHA DE DEBUG ADICIONADA ---
-        console.log("DADOS COMPLETOS DOS TRACKING LOGS:", JSON.stringify(trackingLogsData, null, 2));
-
         if (!trackingLogsData.trackingLogs || trackingLogsData.trackingLogs.length === 0) {
             throw new Error(`Nenhum histórico de navegação (Tracking Log) encontrado para este contato no ActiveCampaign.`);
         }
         
-        const firstValidLog = trackingLogsData.trackingLogs.find(log => log.visiturl);
+        // --- CORREÇÃO 1: Procurando pelo campo 'value' ---
+        const firstValidLog = trackingLogsData.trackingLogs.find(log => log.value);
 
         if (!firstValidLog) {
-            // Mesmo que falhe, já teremos visto os dados no log acima
             throw new Error(`Nenhum log de visita a uma página web foi encontrado no histórico recente do contato.`);
         }
         
-        const firstUrl = firstValidLog.visiturl;
+        // --- CORREÇÃO 2: Extraindo do campo 'value' ---
+        const firstUrl = firstValidLog.value;
 
         const updatePayload = { [PIPEDRIVE_URL_FIELD_ID]: firstUrl };
         await apiCall(`${pipedriveBaseUrl}/deals/${dealId}?api_token=${PIPEDRIVE_API_TOKEN}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updatePayload) });
