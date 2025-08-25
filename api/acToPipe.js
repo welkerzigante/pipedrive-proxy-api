@@ -1,4 +1,4 @@
-// api/acToPipe.js (versão que busca um histórico maior de logs)
+// api/acToPipe.js (versão de depuração para inspecionar os logs)
 
 async function apiCall(url, options) {
     const response = await fetch(url, options);
@@ -42,10 +42,11 @@ export default async function handler(req, res) {
         if (!acContactData.contacts || acContactData.contacts.length === 0) throw new Error(`Contato com email ${email} não encontrado no ActiveCampaign.`);
         const acContactId = acContactData.contacts[0].id;
 
-        // --- A CORREÇÃO ESTÁ AQUI: limit=100 ---
         const trackingLogsUrl = `${AC_API_URL}/api/3/trackingLogs?filters[contactid]=${acContactId}&sort=tstamp&sort_direction=ASC&limit=100`;
-        
         const trackingLogsData = await apiCall(trackingLogsUrl, { headers: { 'Api-Token': AC_API_KEY } });
+
+        // --- LINHA DE DEBUG ADICIONADA ---
+        console.log("DADOS COMPLETOS DOS TRACKING LOGS:", JSON.stringify(trackingLogsData, null, 2));
 
         if (!trackingLogsData.trackingLogs || trackingLogsData.trackingLogs.length === 0) {
             throw new Error(`Nenhum histórico de navegação (Tracking Log) encontrado para este contato no ActiveCampaign.`);
@@ -54,6 +55,7 @@ export default async function handler(req, res) {
         const firstValidLog = trackingLogsData.trackingLogs.find(log => log.visiturl);
 
         if (!firstValidLog) {
+            // Mesmo que falhe, já teremos visto os dados no log acima
             throw new Error(`Nenhum log de visita a uma página web foi encontrado no histórico recente do contato.`);
         }
         
