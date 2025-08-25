@@ -1,4 +1,4 @@
-// api/acToPipe.js (versão com a correção do filtro de tracking logs)
+// api/acToPipe.js (versão que ignora logs sem URL)
 
 async function apiCall(url, options) {
     const response = await fetch(url, options);
@@ -42,20 +42,25 @@ export default async function handler(req, res) {
         if (!acContactData.contacts || acContactData.contacts.length === 0) throw new Error(`Contato com email ${email} não encontrado no ActiveCampaign.`);
         const acContactId = acContactData.contacts[0].id;
 
-        // --- A CORREÇÃO ESTÁ AQUI ---
-        const trackingLogsUrl = `${AC_API_URL}/api/3/trackingLogs?filters[contactid]=${acContactId}&sort=tstamp&sort_direction=ASC&limit=1`;
-        
+        // --- LÓGICA ATUALIZADA E MAIS ROBUSTA ---
+        // 1. Pede os 10 logs mais antigos em vez de apenas 1.
+        const trackingLogsUrl = `${AC_API_URL}/api/3/trackingLogs?filters[contactid]=${acContactId}&sort=tstamp&sort_direction=ASC&limit=10`;
         const trackingLogsData = await apiCall(trackingLogsUrl, { headers: { 'Api-Token': AC_API_KEY } });
 
         if (!trackingLogsData.trackingLogs || trackingLogsData.trackingLogs.length === 0) {
             throw new Error(`Nenhum histórico de navegação (Tracking Log) encontrado para este contato no ActiveCampaign.`);
         }
         
-        const firstUrl = trackingLogsData.trackingLogs[0].visiturl;
+        // 2. Procura na lista o primeiro log que tenha uma 'visiturl' válida.
+        const firstValidLog = trackingLogsData.trackingLogs.find(log => log.visiturl);
 
-        if (!firstUrl) {
-            throw new Error(`O log de navegação mais antigo não continha uma URL.`);
+        // 3. Se nenhum log válido for encontrado na lista, dispara um erro.
+        if (!firstValidLog) {
+            throw new Error(`Nenhum log de visita a uma página web foi encontrado no histórico recente do contato.`);
         }
+        
+        // 4. Pega a URL do primeiro log válido que encontrou.
+        const firstUrl = firstValidLog.visiturl;
 
         const updatePayload = { [PIPEDRIVE_URL_FIELD_ID]: firstUrl };
         await apiCall(`${pipedriveBaseUrl}/deals/${dealId}?api_token=${PIPEDRIVE_API_TOKEN}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updatePayload) });
