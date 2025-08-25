@@ -1,4 +1,4 @@
-// api/acToPipe.js (versão final que usa o campo 'value' dos logs)
+// api/acToPipe.js (versão com a correção final do endpoint de tracking logs)
 
 async function apiCall(url, options) {
     const response = await fetch(url, options);
@@ -42,21 +42,22 @@ export default async function handler(req, res) {
         if (!acContactData.contacts || acContactData.contacts.length === 0) throw new Error(`Contato com email ${email} não encontrado no ActiveCampaign.`);
         const acContactId = acContactData.contacts[0].id;
 
-        const trackingLogsUrl = `${AC_API_URL}/api/3/trackingLogs?filters[contactid]=${acContactId}&sort=tstamp&sort_direction=ASC&limit=100`;
+        // --- A CORREÇÃO FINAL ESTÁ AQUI ---
+        // Usamos o endpoint correto, específico do contato
+        const trackingLogsUrl = `${AC_API_URL}/api/3/contacts/${acContactId}/trackingLogs?sort=tstamp&sort_direction=ASC&limit=100`;
+        
         const trackingLogsData = await apiCall(trackingLogsUrl, { headers: { 'Api-Token': AC_API_KEY } });
 
         if (!trackingLogsData.trackingLogs || trackingLogsData.trackingLogs.length === 0) {
             throw new Error(`Nenhum histórico de navegação (Tracking Log) encontrado para este contato no ActiveCampaign.`);
         }
         
-        // --- CORREÇÃO 1: Procurando pelo campo 'value' ---
         const firstValidLog = trackingLogsData.trackingLogs.find(log => log.value);
 
         if (!firstValidLog) {
             throw new Error(`Nenhum log de visita a uma página web foi encontrado no histórico recente do contato.`);
         }
         
-        // --- CORREÇÃO 2: Extraindo do campo 'value' ---
         const firstUrl = firstValidLog.value;
 
         const updatePayload = { [PIPEDRIVE_URL_FIELD_ID]: firstUrl };
