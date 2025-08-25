@@ -1,4 +1,4 @@
-// api/acToPipe.js (versão que ignora logs sem URL)
+// api/acToPipe.js (versão que busca um histórico maior de logs)
 
 async function apiCall(url, options) {
     const response = await fetch(url, options);
@@ -42,24 +42,21 @@ export default async function handler(req, res) {
         if (!acContactData.contacts || acContactData.contacts.length === 0) throw new Error(`Contato com email ${email} não encontrado no ActiveCampaign.`);
         const acContactId = acContactData.contacts[0].id;
 
-        // --- LÓGICA ATUALIZADA E MAIS ROBUSTA ---
-        // 1. Pede os 10 logs mais antigos em vez de apenas 1.
-        const trackingLogsUrl = `${AC_API_URL}/api/3/trackingLogs?filters[contactid]=${acContactId}&sort=tstamp&sort_direction=ASC&limit=10`;
+        // --- A CORREÇÃO ESTÁ AQUI: limit=100 ---
+        const trackingLogsUrl = `${AC_API_URL}/api/3/trackingLogs?filters[contactid]=${acContactId}&sort=tstamp&sort_direction=ASC&limit=100`;
+        
         const trackingLogsData = await apiCall(trackingLogsUrl, { headers: { 'Api-Token': AC_API_KEY } });
 
         if (!trackingLogsData.trackingLogs || trackingLogsData.trackingLogs.length === 0) {
             throw new Error(`Nenhum histórico de navegação (Tracking Log) encontrado para este contato no ActiveCampaign.`);
         }
         
-        // 2. Procura na lista o primeiro log que tenha uma 'visiturl' válida.
         const firstValidLog = trackingLogsData.trackingLogs.find(log => log.visiturl);
 
-        // 3. Se nenhum log válido for encontrado na lista, dispara um erro.
         if (!firstValidLog) {
             throw new Error(`Nenhum log de visita a uma página web foi encontrado no histórico recente do contato.`);
         }
         
-        // 4. Pega a URL do primeiro log válido que encontrou.
         const firstUrl = firstValidLog.visiturl;
 
         const updatePayload = { [PIPEDRIVE_URL_FIELD_ID]: firstUrl };
