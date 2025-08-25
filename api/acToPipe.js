@@ -1,4 +1,4 @@
-// api/acToPipe.js (versão com parser de URL robusto)
+// api/acToPipe.js (versão com classificação de URL refinada)
 
 async function apiCall(url, options) {
     const response = await fetch(url, options);
@@ -58,27 +58,38 @@ export default async function handler(req, res) {
         
         const firstUrl = sortedLogs[0].value;
 
-        // --- INÍCIO DA NOVA LÓGICA DE ANÁLISE DE URL (MAIS ROBUSTA) ---
+        // --- INÍCIO DA LÓGICA DE CLASSIFICAÇÃO REFINADA ---
 
-        let conversao = 'Outro'; // Valor padrão
-        let grupo = '';       // Valor padrão
+        let conversao = '';
+        let grupo = '';
 
-        // 1. Verifica se é Google Ads (procurando por gclid ou gad_source)
-        if (firstUrl.includes('gclid=') || firstUrl.includes('gad_source=1')) {
-            conversao = 'Google Ads';
-            
-            // 2. Extrai o parâmetro 'group' manualmente com uma expressão regular
-            const groupMatch = firstUrl.match(/[?&]group=([^&]+)/);
-            grupo = groupMatch ? groupMatch[1] : 'Não encontrado';
+        try {
+            const urlObject = new URL(firstUrl);
+            const params = urlObject.searchParams;
 
-        } 
-        // 3. Se não for Ads, verifica se é Orgânico
-        else if (firstUrl.includes('/blog/')) {
-            conversao = 'Orgânico';
+            // 1. Prioridade máxima: Google Ads
+            if (params.has('gclid') || params.get('gad_source') === '1') {
+                conversao = 'Google Ads';
+                const groupMatch = firstUrl.match(/[?&]group=([^&]+)/);
+                grupo = groupMatch ? groupMatch[1] : 'Não encontrado';
+            }
+            // 2. Se não for Ads, verifica as condições para ser "Outro"
+            // Condição: vem de um subdomínio 'lp' OU tem qualquer parâmetro na URL
+            else if (urlObject.hostname.startsWith('lp.') || params.size > 0) {
+                conversao = 'Outro';
+            }
+            // 3. Se não caiu em nenhuma das regras acima, é Orgânico
+            else {
+                conversao = 'Orgânico';
+            }
+        } catch (e) {
+            // Se a URL for inválida, apenas classifica como Outro para não quebrar
+            conversao = 'Outro';
+            console.error("Erro ao analisar a URL, classificando como 'Outro':", e.message);
         }
-        // 4. Se não for nenhum dos acima, permanece 'Outro'
-
+        
         // --- FIM DA NOVA LÓGICA ---
+
 
         const updatePayload = { [PIPEDRIVE_URL_FIELD_ID]: firstUrl };
         await apiCall(`${pipedriveBaseUrl}/deals/${dealId}?api_token=${PIPEDRIVE_API_TOKEN}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updatePayload) });
