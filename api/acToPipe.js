@@ -1,4 +1,4 @@
-// api/acToPipe.js (versão definitiva com o endpoint e ordenação corretos + log completo)
+// api/acToPipe.js (versão final com endpoint correto + ordenação manual)
 
 async function apiCall(url, options) {
     const response = await fetch(url, options);
@@ -42,26 +42,32 @@ export default async function handler(req, res) {
         if (!acContactData.contacts || acContactData.contacts.length === 0) throw new Error(`Contato com email ${email} não encontrado no ActiveCampaign.`);
         const acContactId = acContactData.contacts[0].id;
 
-        // --- CORREÇÃO FINAL E DEFINITIVA DA CHAMADA À API ---
-        // Usamos o endpoint GERAL, com o filtro de contato e a ordenação corretos
-        const trackingLogsUrl = `${AC_API_URL}/api/3/trackingLogs?contact=${acContactId}&orders[tstamp]=ASC&limit=100`;
+        // --- CORREÇÃO FINAL: USANDO O ENDPOINT QUE FILTRA E A ORDENAÇÃO MANUAL ---
+        // 1. Usa o endpoint que garante o filtro por contato, pegando os 100 mais recentes
+        const trackingLogsUrl = `${AC_API_URL}/api/3/contacts/${acContactId}/trackingLogs?limit=100`;
         
         const trackingLogsData = await apiCall(trackingLogsUrl, { headers: { 'Api-Token': AC_API_KEY } });
-
-        // --- LOG SOLICITADO PARA VERIFICAÇÃO ---
-        console.log("DADOS BRUTOS RECEBIDOS DA API (DEVE ESTAR DO MAIS ANTIGO PARA O MAIS NOVO):", JSON.stringify(trackingLogsData, null, 2));
 
         if (!trackingLogsData.trackingLogs || trackingLogsData.trackingLogs.length === 0) {
             throw new Error(`Nenhum histórico de navegação (Tracking Log) encontrado para este contato no ActiveCampaign.`);
         }
         
-        const firstValidLog = trackingLogsData.trackingLogs.find(log => log.value);
+        // 2. Filtra para manter apenas logs que são visitas a páginas (têm o campo 'value')
+        const pageVisitLogs = trackingLogsData.trackingLogs.filter(log => log.value);
 
-        if (!firstValidLog) {
-            throw new Error(`Nenhum log de visita a uma página web foi encontrado no histórico.`);
+        // 3. Ordena a lista de visitas pelo carimbo de data/hora (tstamp), do mais antigo para o mais novo
+        const sortedLogs = pageVisitLogs.sort((a, b) => {
+            return new Date(a.tstamp) - new Date(b.tstamp);
+        });
+        
+        console.log("LOGS FILTRADOS E ORDENADOS (DO MAIS ANTIGO PARA O MAIS NOVO):", JSON.stringify(sortedLogs, null, 2));
+        
+        if (sortedLogs.length === 0) {
+            throw new Error(`Nenhum log de visita a uma página web foi encontrado no histórico recente do contato.`);
         }
         
-        const firstUrl = firstValidLog.value;
+        // 4. Pega a URL do primeiro item da lista ORDENADA, que será o mais antigo
+        const firstUrl = sortedLogs[0].value;
 
         const updatePayload = { [PIPEDRIVE_URL_FIELD_ID]: firstUrl };
         await apiCall(`${pipedriveBaseUrl}/deals/${dealId}?api_token=${PIPEDRIVE_API_TOKEN}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updatePayload) });
