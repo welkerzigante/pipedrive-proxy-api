@@ -1,4 +1,4 @@
-// api/acToPipe.js (Versão de diagnóstico para listar todos os eventos de um contato)
+// api/acToPipe.js (versão definitiva com o endpoint global + filtro + ordenação)
 
 async function apiCall(url, options) {
     const response = await fetch(url, options);
@@ -16,9 +16,9 @@ export default async function handler(req, res) {
         return res.status(405).json({ success: false, error: 'Method Not Allowed' });
     }
 
-    const { PIPEDRIVE_API_TOKEN, PIPEDRIVE_COMPANY_DOMAIN, AC_API_URL, AC_API_KEY } = process.env;
+    const { PIPEDRIVE_API_TOKEN, PIPEDRIVE_COMPANY_DOMAIN, AC_API_URL, AC_API_KEY, PIPEDRIVE_URL_FIELD_ID } = process.env;
 
-    if (!PIPEDRIVE_API_TOKEN || !PIPEDRIVE_COMPANY_DOMAIN || !AC_API_URL || !AC_API_KEY) {
+    if (!PIPEDRIVE_API_TOKEN || !PIPEDRIVE_COMPANY_DOMAIN || !AC_API_URL || !AC_API_KEY || !PIPEDRIVE_URL_FIELD_ID) {
         return res.status(500).json({ success: false, error: "Uma ou mais variáveis de ambiente não estão configuradas." });
     }
     
@@ -28,7 +28,6 @@ export default async function handler(req, res) {
     }
 
     try {
-        // --- Etapa 1: Buscar o Contato no Pipedrive ---
         const pipedriveBaseUrl = `https://${PIPEDRIVE_COMPANY_DOMAIN}.pipedrive.com/api/v1`;
         const dealData = await apiCall(`${pipedriveBaseUrl}/deals/${dealId}?api_token=${PIPEDRIVE_API_TOKEN}`);
         const personField = dealData.data.person_id;
@@ -39,23 +38,34 @@ export default async function handler(req, res) {
         const email = personData.data.email.find(e => e.primary)?.value;
         if (!email) throw new Error('Pessoa vinculada ao deal não possui email.');
         
-        // --- Etapa 2: Encontrar o Contato no ActiveCampaign ---
         const acContactData = await apiCall(`${AC_API_URL}/api/3/contacts?email=${encodeURIComponent(email)}`, { headers: { 'Api-Token': AC_API_KEY } });
         if (!acContactData.contacts || acContactData.contacts.length === 0) throw new Error(`Contato com email ${email} não encontrado no ActiveCampaign.`);
         const acContactId = acContactData.contacts[0].id;
 
-        // --- Etapa 3: Buscar os 100 eventos mais recentes do contato ---
-        const trackingLogsUrl = `${AC_API_URL}/api/3/contacts/${acContactId}/trackingLogs?limit=100`;
+        // --- CORREÇÃO DEFINITIVA DA CHAMADA À API ---
+        // Usamos o endpoint GERAL com o filtro e a ordenação corretos para ele
+        const trackingLogsUrl = `${AC_API_URL}/api/3/trackingLogs?contact=${acContactId}&orders[tstamp]=ASC&limit=100`;
+        
         const trackingLogsData = await apiCall(trackingLogsUrl, { headers: { 'Api-Token': AC_API_KEY } });
 
-        // --- Etapa 4: Imprimir os dados brutos no log ---
-        console.log(`DADOS BRUTOS DO ACTIVE CAMPAIGN PARA O CONTATO ${acContactId}:`, JSON.stringify(trackingLogsData, null, 2));
+        console.log("DADOS BRUTOS RECEBIDOS DA API (AGORA DEVEM SER DO CONTATO CERTO E ORDENADOS):", JSON.stringify(trackingLogsData, null, 2));
 
-        // Retorna uma mensagem de sucesso para a extensão, informando que os dados foram logados.
-        return res.status(200).json({ 
-            success: true, 
-            message: `Dados brutos para o contato ${acContactId} foram impressos no log da Vercel. Verifique o painel da Vercel.` 
-        });
+        if (!trackingLogsData.trackingLogs || trackingLogsData.trackingLogs.length === 0) {
+            throw new Error(`Nenhum histórico de navegação (Tracking Log) encontrado para este contato no ActiveCampaign.`);
+        }
+        
+        const firstValidLog = trackingLogsData.trackingLogs.find(log => log.value);
+
+        if (!firstValidLog) {
+            throw new Error(`Nenhum log de visita a uma página web foi encontrado no histórico.`);
+        }
+        
+        const firstUrl = firstValidLog.value;
+
+        const updatePayload = { [PIPEDRIVE_URL_FIELD_ID]: firstUrl };
+        await apiCall(`${pipedriveBaseUrl}/deals/${dealId}?api_token=${PIPEDRIVE_API_TOKEN}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updatePayload) });
+        
+        return res.status(200).json({ success: true, message: `Deal atualizado com a URL: ${firstUrl}` });
 
     } catch (error) {
         console.error("ERRO na execução:", error);
