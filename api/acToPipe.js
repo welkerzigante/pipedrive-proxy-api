@@ -1,4 +1,4 @@
-// api/acToPipe.js (versão final limpa para produção)
+// api/acToPipe.js (versão final com análise e classificação da URL)
 
 async function apiCall(url, options) {
     const response = await fetch(url, options);
@@ -19,8 +19,6 @@ export default async function handler(req, res) {
     const { PIPEDRIVE_API_TOKEN, PIPEDRIVE_COMPANY_DOMAIN, AC_API_URL, AC_API_KEY, PIPEDRIVE_URL_FIELD_ID } = process.env;
 
     if (!PIPEDRIVE_API_TOKEN || !PIPEDRIVE_COMPANY_DOMAIN || !AC_API_URL || !AC_API_KEY || !PIPEDRIVE_URL_FIELD_ID) {
-        // Mantemos um erro no log para problemas de configuração
-        console.error("ERRO CRÍTICO: Variáveis de ambiente não configuradas.");
         return res.status(500).json({ success: false, error: "Uma ou mais variáveis de ambiente não estão configuradas." });
     }
     
@@ -44,7 +42,7 @@ export default async function handler(req, res) {
         if (!acContactData.contacts || acContactData.contacts.length === 0) throw new Error(`Contato com email ${email} não encontrado no ActiveCampaign.`);
         const acContactId = acContactData.contacts[0].id;
 
-        const trackingLogsUrl = `${AC_API_URL}/api/3/contacts/${acContactId}/trackingLogs?limit=100`;
+        const trackingLogsUrl = `${AC_API_URL}/api/3/contacts/${acContactId}/trackingLogs?orders[tstamp]=ASC&limit=100`;
         const trackingLogsData = await apiCall(trackingLogsUrl, { headers: { 'Api-Token': AC_API_KEY } });
 
         if (!trackingLogsData.trackingLogs || trackingLogsData.trackingLogs.length === 0) {
@@ -60,14 +58,41 @@ export default async function handler(req, res) {
         
         const firstUrl = sortedLogs[0].value;
 
+        // --- INÍCIO DA NOVA LÓGICA DE ANÁLISE DE URL ---
+
+        let conversao = 'Outro'; // Valor padrão
+        let grupo = '';       // Valor padrão
+
+        try {
+            const urlObject = new URL(firstUrl);
+            const params = urlObject.searchParams;
+
+            // 1. Verifica se é Google Ads
+            if (params.has('gclid') || params.get('gad_source') === '1') {
+                conversao = 'Google Ads';
+                grupo = params.get('group') || 'Não encontrado'; // Pega o valor de 'group'
+            }
+            // 2. Se não for Ads, verifica se é Orgânico (contém /blog/)
+            else if (urlObject.pathname.includes('/blog/')) {
+                conversao = 'Orgânico';
+            }
+            // 3. Se não for nenhum dos acima, permanece 'Outro'
+
+        } catch (e) {
+            // Se a URL for inválida por algum motivo, não quebra a aplicação
+            console.error("Erro ao analisar a URL:", e.message);
+        }
+
         const updatePayload = { [PIPEDRIVE_URL_FIELD_ID]: firstUrl };
         await apiCall(`${pipedriveBaseUrl}/deals/${dealId}?api_token=${PIPEDRIVE_API_TOKEN}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updatePayload) });
         
-        return res.status(200).json({ success: true, message: `Deal atualizado com a URL: ${firstUrl}` });
+        // Formata a nova mensagem de sucesso
+        const successMessage = `URL: ${firstUrl}\nConversão: ${conversao}\nGrupo: ${grupo}`;
+
+        return res.status(200).json({ success: true, message: successMessage });
 
     } catch (error) {
-        // Mantemos o log de ERRO, que é essencial para monitorar falhas
-        console.error(`ERRO ao processar o Deal ID ${dealId}:`, error.message);
+        console.error("ERRO na execução:", error);
         return res.status(500).json({ success: false, error: error.message });
     }
 }
