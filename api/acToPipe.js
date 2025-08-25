@@ -1,4 +1,4 @@
-// api/acToPipe.js (versão com a correção final para personId.value)
+// api/acToPipe.js (versão final que busca nos Tracking Logs)
 
 async function apiCall(url, options) {
     const response = await fetch(url, options);
@@ -12,16 +12,21 @@ async function apiCall(url, options) {
 }
 
 export default async function handler(req, res) {
-    console.log("--- Nova requisição recebida em /api/acToPipe ---");
+    console.log("--- Nova requisição recebida ---");
 
     if (req.method !== 'POST') {
         return res.status(405).json({ success: false, error: 'Method Not Allowed' });
     }
 
-    const { PIPEDRIVE_API_TOKEN, PIPEDRIVE_COMPANY_DOMAIN, AC_API_URL, AC_API_KEY, PIPEDRIVE_URL_FIELD_ID } = process.env;
+    const { 
+        PIPEDRIVE_API_TOKEN, PIPEDRIVE_COMPANY_DOMAIN, 
+        AC_API_URL, AC_API_KEY, 
+        PIPEDRIVE_URL_FIELD_ID 
+    } = process.env;
 
+    // A variável AC_URL_FIELD_NAME foi removida da verificação
     if (!PIPEDRIVE_API_TOKEN || !PIPEDRIVE_COMPANY_DOMAIN || !AC_API_URL || !AC_API_KEY || !PIPEDRIVE_URL_FIELD_ID) {
-        return res.status(500).json({ success: false, error: "Variáveis de ambiente não configuradas no servidor." });
+        return res.status(500).json({ success: false, error: "Uma ou mais variáveis de ambiente não estão configuradas." });
     }
     
     const { dealId } = req.body;
@@ -30,16 +35,13 @@ export default async function handler(req, res) {
     }
 
     try {
+        // --- ETAPAS DO PIPEDRIVE (permanecem iguais) ---
         const pipedriveBaseUrl = `https://${PIPEDRIVE_COMPANY_DOMAIN}.pipedrive.com/api/v1`;
         const dealData = await apiCall(`${pipedriveBaseUrl}/deals/${dealId}?api_token=${PIPEDRIVE_API_TOKEN}`);
-        
-        // --- A CORREÇÃO FINAL ESTÁ AQUI ---
         const personField = dealData.data.person_id;
         const personId = (typeof personField === 'object' && personField !== null) ? personField.value : personField;
-        
         if (!personId) throw new Error('Deal não possui uma pessoa vinculada.');
-        console.log(`LOG: Sucesso! Person ID encontrado: ${personId}`);
-
+        
         const personData = await apiCall(`${pipedriveBaseUrl}/persons/${personId}?api_token=${PIPEDRIVE_API_TOKEN}`);
         const email = personData.data.email.find(e => e.primary)?.value;
         if (!email) throw new Error('Pessoa vinculada ao deal não possui email.');
@@ -47,12 +49,27 @@ export default async function handler(req, res) {
         const acContactData = await apiCall(`${AC_API_URL}/api/3/contacts?email=${encodeURIComponent(email)}`, { headers: { 'Api-Token': AC_API_KEY } });
         if (!acContactData.contacts || acContactData.contacts.length === 0) throw new Error(`Contato com email ${email} não encontrado no ActiveCampaign.`);
         const acContactId = acContactData.contacts[0].id;
+
+        // --- LÓGICA ATUALIZADA PARA BUSCAR NOS TRACKING LOGS ---
+        // 1. Monta a URL para buscar os logs do contato, ordenados do mais antigo para o mais novo, pegando apenas o primeiro resultado.
+        const trackingLogsUrl = `${AC_API_URL}/api/3/trackingLogs?contact=${acContactId}&sort=tstamp&sort_direction=ASC&limit=1`;
         
-        const acFieldValuesData = await apiCall(`${AC_API_URL}/api/3/contacts/${acContactId}/fieldValues`, { headers: { 'Api-Token': AC_API_KEY } });
-        const firstUrlField = acFieldValuesData.fieldValues.find(field => field.field === '1');
-        const firstUrl = firstUrlField ? firstUrlField.value : null;
-        if (!firstUrl) throw new Error('Não foi possível encontrar a primeira URL de origem no ActiveCampaign.');
+        // 2. Faz a chamada para a API de Tracking Logs
+        const trackingLogsData = await apiCall(trackingLogsUrl, { headers: { 'Api-Token': AC_API_KEY } });
+
+        // 3. Verifica se algum log foi retornado
+        if (!trackingLogsData.trackingLogs || trackingLogsData.trackingLogs.length === 0) {
+            throw new Error(`Nenhum histórico de navegação (Tracking Log) encontrado para este contato no ActiveCampaign.`);
+        }
         
+        // 4. Pega a URL do primeiro (e único) log da lista
+        const firstUrl = trackingLogsData.trackingLogs[0].visiturl;
+
+        if (!firstUrl) {
+            throw new Error(`O log de navegação mais antigo não continha uma URL.`);
+        }
+
+        // --- ETAPA FINAL (permanece igual) ---
         const updatePayload = { [PIPEDRIVE_URL_FIELD_ID]: firstUrl };
         await apiCall(`${pipedriveBaseUrl}/deals/${dealId}?api_token=${PIPEDRIVE_API_TOKEN}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updatePayload) });
         
