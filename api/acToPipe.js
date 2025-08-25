@@ -1,4 +1,4 @@
-// api/acToPipe.js (versão com a correção final do endpoint de tracking logs)
+// api/acToPipe.js (versão com a correção final de ordenação)
 
 async function apiCall(url, options) {
     const response = await fetch(url, options);
@@ -42,9 +42,8 @@ export default async function handler(req, res) {
         if (!acContactData.contacts || acContactData.contacts.length === 0) throw new Error(`Contato com email ${email} não encontrado no ActiveCampaign.`);
         const acContactId = acContactData.contacts[0].id;
 
-        // --- A CORREÇÃO FINAL ESTÁ AQUI ---
-        // Usamos o endpoint correto, específico do contato
-        const trackingLogsUrl = `${AC_API_URL}/api/3/contacts/${acContactId}/trackingLogs?sort=tstamp&sort_direction=ASC&limit=100`;
+        // --- A CORREÇÃO FINAL ESTÁ AQUI: orders[tstamp]=ASC ---
+        const trackingLogsUrl = `${AC_API_URL}/api/3/contacts/${acContactId}/trackingLogs?orders[tstamp]=ASC&limit=100`;
         
         const trackingLogsData = await apiCall(trackingLogsUrl, { headers: { 'Api-Token': AC_API_KEY } });
 
