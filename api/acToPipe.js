@@ -1,14 +1,10 @@
-// api/acToPipe.js (versão com a correção final)
+// api/acToPipe.js (versão com lógica robusta para personId)
 
 async function apiCall(url, options) {
     const response = await fetch(url, options);
     if (!response.ok) {
         let errorBody;
-        try {
-            errorBody = await response.json();
-        } catch (e) {
-            errorBody = { error: response.statusText };
-        }
+        try { errorBody = await response.json(); } catch (e) { errorBody = { error: response.statusText }; }
         throw new Error(`API Error (${response.status}): ${errorBody.error || JSON.stringify(errorBody)}`);
     }
     if (response.status === 204) return null;
@@ -22,13 +18,7 @@ export default async function handler(req, res) {
         return res.status(405).json({ success: false, error: 'Method Not Allowed' });
     }
 
-    const {
-        PIPEDRIVE_API_TOKEN,
-        PIPEDRIVE_COMPANY_DOMAIN,
-        AC_API_URL,
-        AC_API_KEY,
-        PIPEDRIVE_URL_FIELD_ID
-    } = process.env;
+    const { PIPEDRIVE_API_TOKEN, PIPEDRIVE_COMPANY_DOMAIN, AC_API_URL, AC_API_KEY, PIPEDRIVE_URL_FIELD_ID } = process.env;
 
     if (!PIPEDRIVE_API_TOKEN || !PIPEDRIVE_COMPANY_DOMAIN || !AC_API_URL || !AC_API_KEY || !PIPEDRIVE_URL_FIELD_ID) {
         console.error("ERRO: Variáveis de ambiente não configuradas.");
@@ -47,8 +37,9 @@ export default async function handler(req, res) {
         console.log("LOG: Iniciando chamada 1: GET /deals/{dealId}");
         const dealData = await apiCall(`${pipedriveBaseUrl}/deals/${dealId}?api_token=${PIPEDRIVE_API_TOKEN}`);
         
-        // --- A CORREÇÃO ESTÁ AQUI ---
-        const personId = dealData.data.person_id.id; 
+        // --- A CORREÇÃO ROBUSTA ESTÁ AQUI ---
+        const personField = dealData.data.person_id;
+        const personId = (typeof personField === 'object' && personField !== null) ? personField.id : personField;
         
         if (!personId) throw new Error('Deal não possui uma pessoa vinculada.');
         console.log(`LOG: Sucesso! Person ID encontrado: ${personId}`);
@@ -59,6 +50,7 @@ export default async function handler(req, res) {
         if (!email) throw new Error('Pessoa vinculada ao deal não possui email.');
         console.log(`LOG: Sucesso! Email encontrado: ${email}`);
 
+        // O resto do código continua igual...
         console.log("LOG: Iniciando chamada 3: GET /contacts?email=...");
         const acContactData = await apiCall(`${AC_API_URL}/api/3/contacts?email=${encodeURIComponent(email)}`, {
             headers: { 'Api-Token': AC_API_KEY }
