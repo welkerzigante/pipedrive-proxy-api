@@ -1,4 +1,4 @@
-// api/acToPipe.js (versão final com ordenação manual no código)
+// api/acToPipe.js (versão final limpa para produção)
 
 async function apiCall(url, options) {
     const response = await fetch(url, options);
@@ -19,6 +19,8 @@ export default async function handler(req, res) {
     const { PIPEDRIVE_API_TOKEN, PIPEDRIVE_COMPANY_DOMAIN, AC_API_URL, AC_API_KEY, PIPEDRIVE_URL_FIELD_ID } = process.env;
 
     if (!PIPEDRIVE_API_TOKEN || !PIPEDRIVE_COMPANY_DOMAIN || !AC_API_URL || !AC_API_KEY || !PIPEDRIVE_URL_FIELD_ID) {
+        // Mantemos um erro no log para problemas de configuração
+        console.error("ERRO CRÍTICO: Variáveis de ambiente não configuradas.");
         return res.status(500).json({ success: false, error: "Uma ou mais variáveis de ambiente não estão configuradas." });
     }
     
@@ -42,8 +44,6 @@ export default async function handler(req, res) {
         if (!acContactData.contacts || acContactData.contacts.length === 0) throw new Error(`Contato com email ${email} não encontrado no ActiveCampaign.`);
         const acContactId = acContactData.contacts[0].id;
 
-        // --- LÓGICA FINAL COM ORDENAÇÃO MANUAL ---
-        // 1. Pede os 100 logs mais recentes (sem pedir ordenação para a API)
         const trackingLogsUrl = `${AC_API_URL}/api/3/contacts/${acContactId}/trackingLogs?limit=100`;
         const trackingLogsData = await apiCall(trackingLogsUrl, { headers: { 'Api-Token': AC_API_KEY } });
 
@@ -51,23 +51,13 @@ export default async function handler(req, res) {
             throw new Error(`Nenhum histórico de navegação (Tracking Log) encontrado para este contato no ActiveCampaign.`);
         }
         
-        // 2. Filtra para manter apenas logs que são visitas a páginas (têm o campo 'value')
         const pageVisitLogs = trackingLogsData.trackingLogs.filter(log => log.value);
-
-        // 3. Ordena a lista de visitas pelo carimbo de data/hora (tstamp), do mais antigo para o mais novo
-        const sortedLogs = pageVisitLogs.sort((a, b) => {
-            return new Date(a.tstamp) - new Date(b.tstamp);
-        });
-
-        // 4. (LOG SOLICITADO) Imprime a lista ordenada para verificação
-        console.log("LOGS ORDENADOS (DO MAIS ANTIGO PARA O MAIS NOVO):", JSON.stringify(sortedLogs, null, 2));
-
-        // 5. Verifica se, após filtrar, ainda temos algum log válido
+        const sortedLogs = pageVisitLogs.sort((a, b) => new Date(a.tstamp) - new Date(b.tstamp));
+        
         if (sortedLogs.length === 0) {
             throw new Error(`Nenhum log de visita a uma página web foi encontrado no histórico recente do contato.`);
         }
         
-        // 6. Pega a URL do primeiro item da lista AGORA ORDENADA, que será o mais antigo
         const firstUrl = sortedLogs[0].value;
 
         const updatePayload = { [PIPEDRIVE_URL_FIELD_ID]: firstUrl };
@@ -76,7 +66,8 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, message: `Deal atualizado com a URL: ${firstUrl}` });
 
     } catch (error) {
-        console.error("ERRO na execução:", error);
+        // Mantemos o log de ERRO, que é essencial para monitorar falhas
+        console.error(`ERRO ao processar o Deal ID ${dealId}:`, error.message);
         return res.status(500).json({ success: false, error: error.message });
     }
 }
