@@ -1,55 +1,66 @@
-// api/sync.js
+import { createClient } from '@vercel/kv';
 
-export default async function handler(req, res) {
-    // Apenas permitir requisições do tipo POST
-    if (req.method !== 'POST') {
-        return res.status(405).json({ success: false, error: 'Method Not Allowed' });
-    }
+const kv = createClient({
+  url: process.env.KV_REST_API_URL,
+  token: process.env.KV_REST_API_TOKEN,
+});
 
-    // Pega as chaves secretas que vamos configurar na Vercel
-    const { PIPEDRIVE_API_TOKEN, PIPEDRIVE_COMPANY_DOMAIN } = process.env;
+export default async function handler(request, response) {
+  response.setHeader('Access-Control-Allow-Origin', '*');
+  response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-    if (!PIPEDRIVE_API_TOKEN || !PIPEDRIVE_COMPANY_DOMAIN) {
-        return res.status(500).json({ success: false, error: "Configuração de API não encontrada no servidor." });
-    }
+  if (request.method === 'OPTIONS') {
+    return response.status(200).end();
+  }
 
-    // Pega os dados que a extensão enviou (ID do Deal e a nota)
-    const { dealId, note } = req.body;
+  const { contactName, dealId, lastMessageIdentifier, syncedBy } = request.body;
+  const originalKey = contactName || request.query.contactName;
 
-    if (!dealId || !note) {
-        return res.status(400).json({ success: false, error: 'ID do Deal e a nota são obrigatórios.' });
-    }
+  if (!originalKey) {
+    return response.status(400).json({ error: 'O nome do contato (contactName) é obrigatório.' });
+  }
 
-    const BASE_URL = `https://${PIPEDRIVE_COMPANY_DOMAIN}.pipedrive.com/api/v1`;
+  // >>> INÍCIO DA CORREÇÃO <<<
+  // Limpa a chave, removendo tudo que não for um dígito numérico.
+  // Ex: "+55 48 9908-1334" se torna "554899081334"
+  const safeKey = originalKey.replace(/\D/g, ''); 
+  // >>> FIM DA CORREÇÃO <<<
 
+  if (!safeKey) {
+    return response.status(400).json({ error: 'O nome do contato fornecido é inválido.' });
+  }
+
+  if (request.method === 'POST') {
     try {
-        // Faz a chamada para a API do Pipedrive, usando a chave secreta
-        const notePayload = {
-            content: note, // A nota já vem formatada do content_script
-            deal_id: parseInt(dealId, 10),
-        };
+      const existingData = await kv.get(safeKey) || {};
+      const newData = { ...existingData };
 
-        const noteResponse = await fetch(`${BASE_URL}/notes?api_token=${PIPEDRIVE_API_TOKEN}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            },
-            body: JSON.stringify(notePayload)
-        });
+      if (dealId !== undefined) newData.dealId = dealId;
+      if (lastMessageIdentifier !== undefined) newData.lastMessageIdentifier = lastMessageIdentifier;
+      if (syncedBy !== undefined) {
+        newData.syncedBy = syncedBy;
+        newData.lastSyncTimestamp = new Date().toISOString();
+      }
 
-        if (!noteResponse.ok) {
-            const errorBody = await noteResponse.json();
-            throw new Error(`Erro ao criar anotação: ${errorBody.error || 'Erro desconhecido'}`);
-        }
-
-        const noteData = await noteResponse.json();
-
-        // Devolve uma resposta de sucesso para a extensão
-        return res.status(200).json({ success: true, activityId: noteData.data.id });
-
+      await kv.set(safeKey, newData); // Usa a chave limpa para salvar
+      return response.status(200).json({ success: true, savedData: newData });
     } catch (error) {
-        // Devolve uma resposta de erro para a extensão
-        return res.status(500).json({ success: false, error: error.message });
+      return response.status(500).json({ error: error.message });
     }
+  }
+
+  if (request.method === 'GET') {
+      try {
+          const data = await kv.get(safeKey); // Usa a chave limpa para buscar
+          if (!data) {
+              return response.status(404).json({ message: 'Nenhum status encontrado para este contato.' });
+          }
+          return response.status(200).json(data);
+      } catch (error) {
+          return response.status(500).json({ error: error.message });
+      }
+  }
+
+  return response.status(405).json({ error: 'Método não permitido.' });
 }
