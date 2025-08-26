@@ -1,70 +1,48 @@
-import Redis from 'ioredis';
-
-const redis = new Redis(process.env.REDIS_URL);
+// api/sync.js
 
 export default async function handler(request, response) {
-  response.setHeader('Access-Control-Allow-Origin', '*');
-  response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  // Pega as credenciais seguras das Variáveis de Ambiente
+  const PIPEDRIVE_API_KEY = process.env.PIPEDRIVE_API_KEY;
+  const PIPEDRIVE_COMPANY_DOMAIN = process.env.PIPEDRIVE_COMPANY_DOMAIN;
 
-  if (request.method === 'OPTIONS') {
-    return response.status(200).end();
+  // Verifica se as credenciais foram configuradas na Vercel
+  if (!PIPEDRIVE_API_KEY || !PIPEDRIVE_COMPANY_DOMAIN) {
+    return response.status(500).json({ success: false, error: "As credenciais do Pipedrive não estão configuradas no servidor." });
+  }
+
+  // Pega os dados enviados pelo plugin (dealId e a nota)
+  const { dealId, note } = request.body;
+
+  if (!dealId || !note) {
+    return response.status(400).json({ success: false, error: "ID do Deal e Nota são obrigatórios." });
   }
 
   try {
-    const { contactName, dealId, lastMessageIdentifier, syncedBy } = request.body || {};
-    const originalKey = contactName || request.query.contactName;
+    // Monta a URL da API do Pipedrive
+    const url = `https://${PIPEDRIVE_COMPANY_DOMAIN}.pipedrive.com/v1/notes?api_token=${PIPEDRIVE_API_KEY}`;
 
-    if (!originalKey) {
-      return response.status(400).json({ error: 'O nome do contato (contactName) é obrigatório.' });
+    // Faz a chamada para a API do Pipedrive para criar a nota
+    const pipedriveResponse = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: note,
+        deal_id: dealId,
+      }),
+    });
+
+    const data = await pipedriveResponse.json();
+
+    if (!pipedriveResponse.ok) {
+      // Se o Pipedrive retornar um erro, repassa esse erro
+      throw new Error(data.error || 'Erro desconhecido do Pipedrive.');
     }
 
-    // --- LÓGICA HÍBRIDA E DEFINITIVA PARA A CHAVE ---
-    let finalKey;
-    if (originalKey.startsWith('+')) {
-      // Se parece um número, limpa e usa só os dígitos
-      finalKey = originalKey.replace(/\D/g, '');
-    } else {
-      // Se for um nome, usa o nome original
-      finalKey = originalKey;
-    }
-    // --- FIM DA LÓGICA HÍBRIDA ---
-
-    if (!finalKey) {
-        return response.status(400).json({ error: 'O nome do contato fornecido é inválido.' });
-    }
-
-    if (request.method === 'POST') {
-        const existingDataString = await redis.get(finalKey);
-        const existingData = existingDataString ? JSON.parse(existingDataString) : {};
-        const newData = { ...existingData };
-
-        if (dealId !== undefined) newData.dealId = dealId;
-        if (lastMessageIdentifier !== undefined) newData.lastMessageIdentifier = lastMessageIdentifier;
-        if (syncedBy !== undefined) {
-          newData.syncedBy = syncedBy;
-          newData.lastSyncTimestamp = new Date().toISOString();
-        }
-        
-        await redis.set(finalKey, JSON.stringify(newData));
-        return response.status(200).json({ success: true, savedData: newData });
-    }
-
-    if (request.method === 'GET') {
-        const dataString = await redis.get(finalKey);
-        
-        if (!dataString) {
-            return response.status(404).json({ message: 'Nenhum status encontrado para este contato.' });
-        }
-        
-        const data = JSON.parse(dataString);
-        return response.status(200).json(data);
-    }
-
-    return response.status(405).json({ error: 'Método não permitido.' });
+    // Se tudo deu certo, retorna sucesso e o ID da atividade criada
+    return response.status(200).json({ success: true, activityId: data.data.id });
 
   } catch (error) {
-    console.error("[ERRO FATAL NO REDIS/HANDLER]", error);
-    return response.status(500).json({ error: 'Erro interno no servidor.', details: error.message });
+    // Se qualquer coisa der errado, retorna uma mensagem de erro clara
+    return response.status(500).json({ success: false, error: error.message });
   }
 }
