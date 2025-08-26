@@ -1,10 +1,5 @@
 import { createClient } from '@vercel/kv';
 
-const kv = createClient({
-  url: process.env.KV_REST_API_URL,
-  token: process.env.KV_REST_API_TOKEN,
-});
-
 export default async function handler(request, response) {
   response.setHeader('Access-Control-Allow-Origin', '*');
   response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -14,53 +9,61 @@ export default async function handler(request, response) {
     return response.status(200).end();
   }
 
-  const { contactName, dealId, lastMessageIdentifier, syncedBy } = request.body;
-  const originalKey = contactName || request.query.contactName;
+  try {
+    const kv = createClient({
+      url: process.env.KV_REST_API_URL,
+      token: process.env.KV_REST_API_TOKEN,
+    });
 
-  if (!originalKey) {
-    return response.status(400).json({ error: 'O nome do contato (contactName) é obrigatório.' });
-  }
+    const { contactName, dealId, lastMessageIdentifier, syncedBy } = request.body || {};
+    const originalKey = contactName || request.query.contactName;
 
-  // >>> INÍCIO DA CORREÇÃO <<<
-  // Limpa a chave, removendo tudo que não for um dígito numérico.
-  // Ex: "+55 48 9908-1334" se torna "554899081334"
-  const safeKey = originalKey.replace(/\D/g, ''); 
-  // >>> FIM DA CORREÇÃO <<<
-
-  if (!safeKey) {
-    return response.status(400).json({ error: 'O nome do contato fornecido é inválido.' });
-  }
-
-  if (request.method === 'POST') {
-    try {
-      const existingData = await kv.get(safeKey) || {};
-      const newData = { ...existingData };
-
-      if (dealId !== undefined) newData.dealId = dealId;
-      if (lastMessageIdentifier !== undefined) newData.lastMessageIdentifier = lastMessageIdentifier;
-      if (syncedBy !== undefined) {
-        newData.syncedBy = syncedBy;
-        newData.lastSyncTimestamp = new Date().toISOString();
-      }
-
-      await kv.set(safeKey, newData); // Usa a chave limpa para salvar
-      return response.status(200).json({ success: true, savedData: newData });
-    } catch (error) {
-      return response.status(500).json({ error: error.message });
+    if (!originalKey) {
+      return response.status(400).json({ error: 'O nome do contato (contactName) é obrigatório.' });
     }
-  }
 
-  if (request.method === 'GET') {
-      try {
-          const data = await kv.get(safeKey); // Usa a chave limpa para buscar
-          if (!data) {
-              return response.status(404).json({ message: 'Nenhum status encontrado para este contato.' });
-          }
-          return response.status(200).json(data);
-      } catch (error) {
-          return response.status(500).json({ error: error.message });
-      }
-  }
+    // --- LÓGICA HÍBRIDA E DEFINITIVA PARA A CHAVE ---
+    let finalKey;
+    if (originalKey.startsWith('+')) {
+      // Se parece um número, limpa e usa só os dígitos
+      finalKey = originalKey.replace(/\D/g, '');
+    } else {
+      // Se for um nome, usa o nome original
+      finalKey = originalKey;
+    }
+    // --- FIM DA LÓGICA HÍBRIDA ---
 
-  return response.status(405).json({ error: 'Método não permitido.' });
+    if (!finalKey) {
+        return response.status(400).json({ error: 'O nome do contato fornecido é inválido.' });
+    }
+
+    if (request.method === 'POST') {
+        const existingData = await kv.get(finalKey) || {};
+        const newData = { ...existingData };
+
+        if (dealId !== undefined) newData.dealId = dealId;
+        if (lastMessageIdentifier !== undefined) newData.lastMessageIdentifier = lastMessageIdentifier;
+        if (syncedBy !== undefined) {
+          newData.syncedBy = syncedBy;
+          newData.lastSyncTimestamp = new Date().toISOString();
+        }
+
+        await kv.set(finalKey, newData);
+        return response.status(200).json({ success: true, savedData: newData });
+    }
+
+    if (request.method === 'GET') {
+        const data = await kv.get(finalKey);
+        if (!data) {
+            return response.status(404).json({ message: 'Nenhum status encontrado para este contato.' });
+        }
+        return response.status(200).json(data);
+    }
+
+    return response.status(405).json({ error: 'Método não permitido.' });
+
+  } catch (error) {
+    console.error("[ERRO FATAL] Ocorreu um erro inesperado:", error);
+    return response.status(500).json({ error: 'Erro interno no servidor.', details: error.message });
+  }
 }
