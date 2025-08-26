@@ -1,6 +1,5 @@
 import Redis from 'ioredis';
 
-// Cria o cliente do Redis usando a variável de ambiente REDIS_URL que a Vercel fornece
 const redis = new Redis(process.env.REDIS_URL);
 
 export default async function handler(request, response) {
@@ -20,26 +19,26 @@ export default async function handler(request, response) {
       return response.status(400).json({ error: 'O nome do contato (contactName) é obrigatório.' });
     }
 
-    // A lógica de chave híbrida permanece a mesma, pois é robusta
+    // --- LÓGICA HÍBRIDA E DEFINITIVA PARA A CHAVE ---
     let finalKey;
     if (originalKey.startsWith('+')) {
+      // Se parece um número, limpa e usa só os dígitos
       finalKey = originalKey.replace(/\D/g, '');
     } else {
+      // Se for um nome, usa o nome original
       finalKey = originalKey;
     }
+    // --- FIM DA LÓGICA HÍBRIDA ---
 
     if (!finalKey) {
         return response.status(400).json({ error: 'O nome do contato fornecido é inválido.' });
     }
 
-    // --- LÓGICA PARA ATUALIZAR (MÉTODO POST) ---
     if (request.method === 'POST') {
         const existingDataString = await redis.get(finalKey);
         const existingData = existingDataString ? JSON.parse(existingDataString) : {};
-
         const newData = { ...existingData };
 
-        // Atualiza os campos enviados na requisição
         if (dealId !== undefined) newData.dealId = dealId;
         if (lastMessageIdentifier !== undefined) newData.lastMessageIdentifier = lastMessageIdentifier;
         if (syncedBy !== undefined) {
@@ -47,12 +46,10 @@ export default async function handler(request, response) {
           newData.lastSyncTimestamp = new Date().toISOString();
         }
         
-        // Salva o objeto como uma string JSON, pois o Redis só armazena texto
         await redis.set(finalKey, JSON.stringify(newData));
         return response.status(200).json({ success: true, savedData: newData });
     }
 
-    // --- LÓGICA PARA OBTER (MÉTODO GET) ---
     if (request.method === 'GET') {
         const dataString = await redis.get(finalKey);
         
@@ -60,7 +57,6 @@ export default async function handler(request, response) {
             return response.status(404).json({ message: 'Nenhum status encontrado para este contato.' });
         }
         
-        // Converte a string JSON de volta para um objeto antes de enviar
         const data = JSON.parse(dataString);
         return response.status(200).json(data);
     }
